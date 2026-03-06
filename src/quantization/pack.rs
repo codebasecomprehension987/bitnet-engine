@@ -1,6 +1,5 @@
 use crate::error::{BitNetError, Result};
 use super::{QuantMode, TernaryWeight};
-use bytemuck::{Pod, Zeroable};
 
 #[derive(Debug, Clone)]
 pub struct PackedMatrix {
@@ -28,16 +27,15 @@ impl BitPacking for PackedMatrix {
         if data.len() != rows * cols {
             return Err(BitNetError::ShapeMismatch {
                 expected: vec![rows, cols],
-                got:      vec![data.len()],
+                got: vec![data.len()],
             });
         }
 
         let scale = super::scale::compute_absmax_scale(data);
-
         let words_per_row = (cols + 63) / 64;
-        let total_words   = rows * words_per_row;
+        let total_words = rows * words_per_row;
 
-        let mut mag  = vec![0u64; total_words];
+        let mut mag = vec![0u64; total_words];
         let mut sign = vec![0u64; if mode == QuantMode::Ternary { total_words } else { 0 }];
 
         let threshold = if mode == QuantMode::Ternary {
@@ -47,8 +45,8 @@ impl BitPacking for PackedMatrix {
         };
 
         for row in 0..rows {
-            let src      = &data[row * cols..(row + 1) * cols];
-            let mag_row  = &mut mag[row * words_per_row..(row + 1) * words_per_row];
+            let src = &data[row * cols..(row + 1) * cols];
+            let mag_row = &mut mag[row * words_per_row..(row + 1) * words_per_row];
             let sign_row = if mode == QuantMode::Ternary {
                 Some(&mut sign[row * words_per_row..(row + 1) * words_per_row])
             } else {
@@ -63,22 +61,27 @@ impl BitPacking for PackedMatrix {
     fn unpack_f32(packed: &PackedMatrix) -> Vec<f32> {
         let mut out = vec![0.0f32; packed.rows * packed.cols];
         for row in 0..packed.rows {
-            let mag_row  = &packed.mag[row * packed.words_per_row..(row + 1) * packed.words_per_row];
+            let mag_row =
+                &packed.mag[row * packed.words_per_row..(row + 1) * packed.words_per_row];
             let sign_row = if packed.mode == QuantMode::Ternary {
                 &packed.sign[row * packed.words_per_row..(row + 1) * packed.words_per_row]
             } else {
                 &[]
             };
             for col in 0..packed.cols {
-                let word  = col / 64;
-                let bit   = col % 64;
+                let word = col / 64;
+                let bit = col % 64;
                 let m_bit = (mag_row[word] >> bit) & 1;
-                let s_bit = if !sign_row.is_empty() { (sign_row[word] >> bit) & 1 } else { 0 };
+                let s_bit = if !sign_row.is_empty() {
+                    (sign_row[word] >> bit) & 1
+                } else {
+                    0
+                };
                 out[row * packed.cols + col] = match (m_bit, s_bit) {
                     (0, _) => 0.0,
                     (1, 0) => packed.scale,
                     (1, 1) => -packed.scale,
-                    _      => unreachable!(),
+                    _ => unreachable!(),
                 };
             }
         }
@@ -88,15 +91,15 @@ impl BitPacking for PackedMatrix {
 
 #[inline]
 fn pack_row(
-    src:       &[f32],
-    mag_row:   &mut [u64],
-    sign_row:  Option<&mut [u64]>,
-    mode:      QuantMode,
+    src: &[f32],
+    mag_row: &mut [u64],
+    mut sign_row: Option<&mut [u64]>,
+    mode: QuantMode,
     threshold: f32,
 ) {
     let cols = src.len();
     for word_idx in 0..mag_row.len() {
-        let base  = word_idx * 64;
+        let base = word_idx * 64;
         let limit = (base + 64).min(cols);
         let mut mw = 0u64;
         let mut sw = 0u64;
@@ -105,7 +108,9 @@ fn pack_row(
             let v = src[base + bit];
             match mode {
                 QuantMode::Binary => {
-                    if v >= 0.0 { mw |= 1u64 << bit; }
+                    if v >= 0.0 {
+                        mw |= 1u64 << bit;
+                    }
                 }
                 QuantMode::Ternary => {
                     let tw = TernaryWeight::from_float(v, threshold);
@@ -120,7 +125,7 @@ fn pack_row(
         }
 
         mag_row[word_idx] = mw;
-        if let Some(ref mut sr) = sign_row.as_deref_mut() {
+        if let Some(ref mut sr) = sign_row {
             sr[word_idx] = sw;
         }
     }
@@ -132,7 +137,8 @@ mod tests {
 
     #[test]
     fn roundtrip_binary() {
-        let data: Vec<f32> = (0..128).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let data: Vec<f32> =
+            (0..128).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
         let packed = PackedMatrix::pack_f32(&data, 2, 64, QuantMode::Binary).unwrap();
         let recovered = PackedMatrix::unpack_f32(&packed);
         for (a, b) in data.iter().zip(recovered.iter()) {

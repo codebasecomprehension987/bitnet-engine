@@ -1,13 +1,6 @@
-// build.rs — BitNet Engine CUDA kernel compilation
-//
-// Invoked by Cargo before compilation. When the `cuda` feature is enabled,
-// this script compiles every .cu file under cuda/kernels/ using nvcc and
-// links the resulting objects into the final binary.
-
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
-    // Always re-run if any CUDA source or this script changes.
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=cuda/");
 
@@ -15,7 +8,6 @@ fn main() {
         compile_cuda_kernels();
     }
 
-    // Emit CPU ISA feature flags so the Rust code can cfg-gate SIMD paths.
     if env::var("CARGO_FEATURE_AVX512").is_ok() {
         println!("cargo:rustc-cfg=feature=\"avx512\"");
     }
@@ -28,7 +20,6 @@ fn compile_cuda_kernels() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cuda_dir = PathBuf::from("cuda/kernels");
 
-    // Collect all .cu files.
     let cu_files: Vec<PathBuf> = fs::read_dir(&cuda_dir)
         .expect("cuda/kernels directory not found")
         .filter_map(|e| {
@@ -50,15 +41,12 @@ fn compile_cuda_kernels() {
         let arch = env::var("CUDA_ARCH").unwrap_or_else(|_| "sm_80".to_string());
 
         let status = Command::new("nvcc")
-            // Optimisation & architecture
             .args(["-O3", &format!("-arch={}", arch)])
-            // PTX intrinsics & warp-level ops
             .args(["--use_fast_math", "-Xptxas=-v"])
-            // Include path for shared headers
-            .arg(format!("-Icuda/include"))
-            // Compile to object only
+            .arg("-Icuda/include")
             .args(["-c", cu.to_str().unwrap()])
-            .arg("-o").arg(&obj)
+            .arg("-o")
+            .arg(&obj)
             .status()
             .expect("nvcc not found — install CUDA toolkit and ensure nvcc is on PATH");
 
@@ -66,7 +54,6 @@ fn compile_cuda_kernels() {
         obj_files.push(obj);
     }
 
-    // Archive all objects into a single static library.
     let lib = out_dir.join("libbitnet_cuda.a");
     let mut ar = Command::new("ar");
     ar.arg("crs").arg(&lib);
